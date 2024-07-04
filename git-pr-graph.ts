@@ -1,6 +1,7 @@
 import { $ } from 'bun';
 import path from 'path';
 import fs from 'fs';
+import { Buffer } from 'buffer';
 
 $.throws(true);
 
@@ -9,14 +10,24 @@ if (process.argv.length < 3) {
   process.exit(1);
 }
 
-const findMonorepoRoot = async () => {
-  let cwd = process.cwd();
+const readFileMaybe = (path: string): Record<string, any> | null => {
+  try {
+    const contents = fs.readFileSync(path);
+    return JSON.parse(contents.toString());
+  } catch {
+    return null;
+  }
+};
+
+const findMonorepoRoot = async (dirPath: string) => {
+  //let cwd = process.cwd();
+  let cwd = dirPath;
   // Look to see if there's a package.json with a workspaces property. If not,
   // go up a directory
   let iters = 0;
   while (iters < 20) {
-    const pkg = require(path.join(cwd, 'package.json'));
-    if (pkg.workspaces) {
+    const pkg = readFileMaybe(path.join(cwd, 'package.json'));
+    if (pkg != null && pkg['workspaces']) {
       return cwd;
     }
     const next = path.join(cwd, '..');
@@ -56,7 +67,86 @@ const topologicalSortMadgeOutput = async (madgeOutput: MadgeOutput) => {
   return sorted.trim().split('\n');
 };
 
-type MadgeOutput = Record<string, Array<string>>
+const popFromSet = <T,>(set: Set<T>): T => {
+  const value = set.values().next().value;
+  set.delete(value);
+  return value;
+};
+
+const createBidirectionalAdjList = (
+  graph: MadgeOutput,
+): Map<string, [outgoing: Set<string>, incoming: Set<string>]> => {
+  const adjList = new Map<
+    string,
+    [outgoing: Set<string>, incoming: Set<string>]
+  >();
+  const toVisit = new Set(Object.keys(graph));
+  while (toVisit.size > 0) {
+    const node = popFromSet(toVisit);
+    const outgoing = graph[node];
+    const incomingSet = adjList.get(node)?.[1] ?? new Set<string>();
+    adjList.set(node, [new Set(outgoing), incomingSet]);
+    for (const out of outgoing) {
+      const curr = adjList.get(out);
+      if (curr != null) {
+        curr[1].add(node);
+      } else {
+        adjList.set(out, [new Set<string>(), new Set([node])]);
+      }
+    }
+  }
+  return adjList;
+};
+
+const filterNodes = (
+  graph: MadgeOutput,
+  toInclude: Set<string>,
+): MadgeOutput => {
+  const adjList = createBidirectionalAdjList(graph);
+
+  const filteredAdjList = new Map<string, Set<string>>();
+  // Filter out nodes that are not in toInclude
+  const toVisit = new Set<string>(adjList.keys());
+  while (toVisit.size > 0) {
+    const node = popFromSet(toVisit);
+    const edges = adjList.get(node);
+    if (toInclude.has(node)) {
+      const outgoing = edges?.[0] == null ? [] : Array.from(edges[0]);
+      filteredAdjList.set(
+        node,
+        new Set<string>(outgoing.filter((n) => toInclude.has(n))),
+      );
+    } else {
+      if (edges == null) {
+        // Probably shouldn't happen
+        continue;
+      }
+      const [_, incoming] = edges;
+      for (const incomingNode of incoming) {
+        adjList.get(incomingNode)?.[0].delete(node);
+      }
+    }
+  }
+  return Object.fromEntries(
+    Array.from(filteredAdjList.entries()).map(([k, v]) => [k, Array.from(v)]),
+  );
+};
+
+const generateDotGraph = async (
+  graph: MadgeOutput,
+  outputGraph: string,
+): Promise<void> => {
+  const dotGraph = `digraph G {
+    ${Object.entries(graph)
+      .map(([node, edges]) =>
+        edges.map((edge) => `"${node}" -> "${edge}";`).join('\n'),
+      )
+      .join('\n')}
+  }`;
+  await $`dot -Tsvg -o ${outputGraph} < ${Buffer.from(dotGraph)}`;
+};
+
+type MadgeOutput = Record<string, Array<string>>;
 
 const main = async () => {
   const packageArg = process.argv[2];
@@ -65,9 +155,12 @@ const main = async () => {
   const srcRoot = `${packageArg}/src`;
   await $`madge --extensions ts,tsx --json --ts-config ${packageArg}/tsconfig.json ${srcRoot} > ${madgeOutputPath}`;
   // Madge output is relative to src root
-  const madgeOutput = JSON.parse(fs.readFileSync(madgeOutputPath, 'utf8')) as MadgeOutput;
+  const madgeOutput = JSON.parse(
+    fs.readFileSync(madgeOutputPath, 'utf8'),
+  ) as MadgeOutput;
 
-  const monoRoot = await findMonorepoRoot();
+  const monoRoot = await findMonorepoRoot(srcRoot);
+  $.cwd(monoRoot);
 
   const MERGE_BASE = process.env['MERGE_BASE'] ?? 'origin/main';
   const mergeBase = (await $`git merge-base HEAD ${MERGE_BASE}`.text()).trim();
@@ -84,6 +177,11 @@ const main = async () => {
     srcRoot,
     madgeOutput,
   );
+
+  const res = filterNodes(madgeOutputRelativeToMonorepoRoot, changedFiles);
+  const graphName = `${tmpFileName()}.svg`;
+  await generateDotGraph(res, `${graphName}`);
+  console.error(`wrote to ${graphName}`);
 
   const madgeTopoSorted = await topologicalSortMadgeOutput(
     madgeOutputRelativeToMonorepoRoot,
