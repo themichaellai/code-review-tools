@@ -1,6 +1,13 @@
 {
   "devDependencies": {
     "@types/bun": "^1.1.6",
+    "@types/madge": "^5.0.3",
     "typescript": "^5.5.2"
+  },
+  "dependencies": {
+    "madge": "^7.0.0"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": "7.15.0"
   }
 }

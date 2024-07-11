@@ -1,7 +1,10 @@
+#!/usr/bin/env bun
+
 import { $ } from 'bun';
 import path from 'path';
 import fs from 'fs';
 import { Buffer } from 'buffer';
+import madge from 'madge';
 
 $.throws(true);
 
@@ -20,7 +23,6 @@ const readFileMaybe = (path: string): Record<string, any> | null => {
 };
 
 const findMonorepoRoot = async (dirPath: string) => {
-  //let cwd = process.cwd();
   let cwd = dirPath;
   // Look to see if there's a package.json with a workspaces property. If not,
   // go up a directory
@@ -98,6 +100,11 @@ const createBidirectionalAdjList = (
   return adjList;
 };
 
+/**
+ * Given a directed graph, removes nodes that are not in the given set. For
+ * nodes that are removed, nodes from their incoming edges are connected to
+ * nodes from the outgoing edges.
+ */
 const filterNodes = (
   graph: MadgeOutput,
   toInclude: Set<string>,
@@ -105,18 +112,19 @@ const filterNodes = (
   const adjList = createBidirectionalAdjList(graph);
 
   const filteredAdjList = new Map<string, Set<string>>();
-  // Filter out nodes that are not in toInclude
   const toVisit = new Set<string>(adjList.keys());
   while (toVisit.size > 0) {
     const node = popFromSet(toVisit);
     const edges = adjList.get(node);
     if (toInclude.has(node)) {
+      // Include the node -- copy over edges
       const outgoing = edges?.[0] == null ? [] : Array.from(edges[0]);
       filteredAdjList.set(
         node,
         new Set<string>(outgoing.filter((n) => toInclude.has(n))),
       );
     } else {
+      // Filter out the node -- connect incoming to outgoing
       if (edges == null) {
         // Probably shouldn't happen
         continue;
@@ -125,6 +133,7 @@ const filterNodes = (
       for (const incomingNode of incoming) {
         adjList.get(incomingNode)?.[0].delete(node);
       }
+      // TODO: figure out whether outgoing are properly connected
     }
   }
   return Object.fromEntries(
@@ -146,18 +155,17 @@ const generateDotGraph = async (
   await $`dot -Tsvg -o ${outputGraph} < ${Buffer.from(dotGraph)}`;
 };
 
+/** A directed graph */
 type MadgeOutput = Record<string, Array<string>>;
 
 const main = async () => {
   const packageArg = process.argv[2];
 
-  const madgeOutputPath = tmpFileName();
   const srcRoot = `${packageArg}/src`;
-  await $`madge --extensions ts,tsx --json --ts-config ${packageArg}/tsconfig.json ${srcRoot} > ${madgeOutputPath}`;
-  // Madge output is relative to src root
-  const madgeOutput = JSON.parse(
-    fs.readFileSync(madgeOutputPath, 'utf8'),
-  ) as MadgeOutput;
+  const madgeOutput = (await madge(srcRoot, {
+    tsConfig: `${packageArg}/tsconfig.json`,
+    fileExtensions: ['ts', 'tsx'],
+  })).obj();
 
   const monoRoot = await findMonorepoRoot(srcRoot);
   $.cwd(monoRoot);
