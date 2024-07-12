@@ -9,7 +9,7 @@ import madge from 'madge';
 $.throws(true);
 
 if (process.argv.length < 3) {
-  console.error('Usage: madge <dir>');
+  console.error('Usage: git pr-graph <dir>');
   process.exit(1);
 }
 
