@@ -3,6 +3,10 @@ code review tools
 install
 =======
 Install bun: https://bun.sh/docs/installation
+Install graphviz:
+```bash
+$ brew install graphviz
+```
 
 If you don't have `~/bin`:
 ```bash
