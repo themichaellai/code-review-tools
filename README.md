@@ -13,6 +13,9 @@ $ mkdir ~/bin
 
 Symlink the script into your path:
 ```bash
+# install dependencies
+$ bun install
+# symlink to the script in your PATH
 $ ln -s "$PWD/git-pr-graph.ts" ~/bin/git-pr-graph
 ```
 
