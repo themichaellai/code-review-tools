@@ -42,7 +42,7 @@ const findMonorepoRoot = async (dirPath: string) => {
   throw new Error('could not find monorepo root');
 };
 const tmpFileName = () =>
-  `/tmp/git-madge2-${Math.random().toString(36).substring(7)}`;
+  `/tmp/git-pr-graph-${Math.random().toString(36).substring(7)}`;
 
 const convertMadgeGraphToAbsolutePaths = (
   monorepoRootAbsolute: string,
@@ -129,11 +129,17 @@ const filterNodes = (
         // Probably shouldn't happen
         continue;
       }
-      const [_, incoming] = edges;
+      const [outgoing, incoming] = edges;
       for (const incomingNode of incoming) {
-        adjList.get(incomingNode)?.[0].delete(node);
+        const incomingNodeEdges = adjList.get(incomingNode);
+        if (incomingNodeEdges == null) {
+          // Probably shouldn't happen
+          continue;
+        }
+        incomingNodeEdges[0].delete(node);
+        const newOutgoing = incomingNodeEdges[0].union(outgoing);
+        adjList.set(incomingNode, [newOutgoing, incomingNodeEdges[1]]);
       }
-      // TODO: figure out whether outgoing are properly connected
     }
   }
   return Object.fromEntries(
